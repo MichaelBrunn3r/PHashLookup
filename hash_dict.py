@@ -40,28 +40,37 @@ def generate_dict_for(alphabet, pwd_len):
 
 def save(hash_dict, prefix, segments):
         dict_map = list()
+        segment_entries = round(len(hash_dict)/segments)
+        segment_id_length = math.ceil(math.log10(segments))
 
         # Save hashes
         print("Saving hashes ...")
-        segment_size = round(len(hash_dict)/segments)
+        
+        segment_id = 0
         with tqdm(total=len(hash_dict), unit='hash', unit_scale=True) as pbar:
             file = None
             for i, x in enumerate(hash_dict):
-                if i % segment_size == 0:
+                if i % segment_entries == 0:
                     if file != None: file.close()
-                    file = open("{}-{}.data".format(prefix, bytes(hash_dict[i]['hash']).hex()), 'w+b')
+                    file = open("{}-{}.data".format(prefix, str(segment_id).zfill(segment_id_length)), 'w+b')
+                    segment_id += 1
                     dict_map.append(x['hash'])
-
                 file.write(x['hash'])
                 pbar.update()
             file.close()
 
         print("Saving passwords ...")
-        with open("{}-pwds.data".format(prefix), 'w+b') as f:
-            with tqdm(total=len(hash_dict), unit='pwd', unit_scale=True) as pbar:
-                for x in hash_dict:
-                    f.write(x['pwd'])
-                    pbar.update()
+        segment_id = 0
+        with tqdm(total=len(hash_dict), unit='pwd', unit_scale=True) as pbar:
+            file = None
+            for i,x in enumerate(hash_dict):
+                if i % segment_entries == 0:
+                    if file != None: file.close()
+                    file = open("{}-pwds-{}.data".format(prefix, str(segment_id).zfill(segment_id_length)), 'w+b')
+                    segment_id += 1
+                    dict_map.append(x['hash'])
+                file.write(x['pwd'])
+                pbar.update()
 
         print("Saving map ...")
         with open("{}-map.data".format(prefix), 'w+b') as f:
@@ -71,37 +80,26 @@ def save(hash_dict, prefix, segments):
                     pbar.update()
 
 def find(searched, prefix, segments, n_passwords):
-    segment_size = round(n_passwords/segments)
-    segment_name = None
-    segment_idx = 0
+    segment_entries = round(n_passwords/segments)
+    segment_id = -1
+    segment_id_length = math.ceil(math.log10(segments))
+
     with open("{}-map.data".format(prefix), 'rb') as f:
-        prev = f.read(HASH_SIZE)
-        for i in range(segments-1):
-            if searched < prev: return None
-            current = f.read(HASH_SIZE)
+        for i in range(segments):
+            if searched < f.read(HASH_SIZE): break
+            segment_id += 1
 
-            if searched < current: break
-            else:
-                segment_idx += 1 
-                prev = current
-        segment_name = prev
-
-    if not segment_name: return None
-    else: segment_name = bytes(segment_name).hex()
-
-    # print(segment_name, segment_idx)
-
-    pwd_offset = segment_idx * segment_size
-    with open("{}-{}.data".format(prefix, segment_name), 'rb') as f:
+    pwd_offset = 0
+    with open("{}-{}.data".format(prefix, str(segment_id).zfill(segment_id_length)), 'rb') as f:
         hash = f.read(HASH_SIZE)
         while len(hash) == HASH_SIZE:
             if hash == searched: break
             hash = f.read(HASH_SIZE)
             pwd_offset += 1
-        
+
     if len(hash) != HASH_SIZE: return None
     
-    with open("{}-pwds.data".format(prefix), 'rb') as f:
+    with open("{}-pwds-{}.data".format(prefix, str(segment_id).zfill(segment_id_length)), 'rb') as f:
         f.read(pwd_offset*5)
         return f.read(5).decode('utf-8')
 
@@ -178,7 +176,7 @@ def cmd_benchmark(argv):
     test_cases = gen_rand_str_set(args.alphabet, args.length, args.num_tests)
     for case in tqdm(test_cases, unit='test', unit_scale=True):
         hash256 = hashlib.sha256(bytes(case, 'utf-8')).digest()
-        
+
         # Benchmark find method
         start = time.time()
         pwd = find(hash256, args.prefix, args.segments, num_possible_pwds)
@@ -189,7 +187,7 @@ def cmd_benchmark(argv):
             print("Error: ", pwd, case, i, bytes(hash256).hex())
             return
 
-    print("total={}s, avrg={}s".format(round(total_time,4), round(total_time/100,4)))
+    print("total={}s, avrg={}s".format(round(total_time,4), round(total_time/args.num_tests,4)))
     
 ########
 # Main #
@@ -214,6 +212,3 @@ if __name__ == '__main__':
         cmd_find(sys.argv[2:])
     if args.command == CMD_BENCHMARK:
         cmd_benchmark(sys.argv[2:])
-
-
-# s:32 -> total=360.0621s, avrg=3.6006s
